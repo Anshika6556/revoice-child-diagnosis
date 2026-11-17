@@ -110,3 +110,37 @@ export async function saveDiagnosticAssessment(report: DiagnosticReport) {
     return { error: err };
   }
 }
+
+/**
+ * 4. Save screening protocol results (voice, DDK, picture naming + domain outcomes).
+ *    Opt-in: create the table with supabase/screening_results.sql, then set VITE_SAVE_SCREENING=true.
+ */
+export async function saveScreeningResult(report: DiagnosticReport) {
+  if (!supabase || import.meta.env.VITE_SAVE_SCREENING !== 'true' || !report.screening) return { error: null };
+
+  try {
+    const { data, error } = await supabase
+      .from('screening_results')
+      .insert({
+        speaker_id: report.profile.speakerId.toUpperCase(),
+        age: report.profile.age,
+        age_band: report.screening.ageBand,
+        overall_status: report.screening.overall,
+        domains: report.screening.domains,
+        avg_word_accuracy: report.avgAccuracy ?? null,
+        voice_attempts: report.tasks?.voice ?? [],
+        ddk: report.tasks?.ddk ?? {},
+        picture_naming: report.tasks?.naming ?? []
+      });
+
+    if (error) {
+      console.error('[DB] Error saving screening result:', error);
+    } else {
+      console.log('[DB] Screening result saved for:', report.profile.speakerId);
+    }
+    return { data, error };
+  } catch (err) {
+    console.error('[DB] Unexpected error saving screening result:', err);
+    return { error: err };
+  }
+}

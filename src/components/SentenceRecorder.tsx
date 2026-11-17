@@ -5,6 +5,7 @@ import { evaluateDualSentence } from '../lib/speechAnalysis';
 import { pcmToWavBlob } from '../lib/wavEncoder';
 import { ensureDevanagari } from '../lib/devanagari';
 import { savePromptRecord } from '../lib/dbService';
+import { analyzePauses } from '../lib/acoustics';
 import confetti from 'canvas-confetti';
 import {
   Mic,
@@ -13,14 +14,18 @@ import {
   Volume2,
   FileText,
   Download,
-  Sparkles,
-  CheckCircle,
-  Activity
+  Check,
+  Lock,
+  ArrowRight,
+  Activity,
+  AlertTriangle
 } from 'lucide-react';
+import { MetricMeter } from './ui';
 
 interface Props {
   sentences: SentenceItem[];
   onGenerateReport: (evaluations: SentenceEvaluation[]) => void;
+  onEvaluationsChange?: (evaluations: SentenceEvaluation[]) => void;
   whisperReady: boolean;
   childName: string;
   speakerId: string;
@@ -37,6 +42,7 @@ const CARTOON_CHEERS = [
 export const SentenceRecorder: React.FC<Props> = ({
   sentences,
   onGenerateReport,
+  onEvaluationsChange,
   whisperReady,
   childName,
   speakerId
@@ -55,6 +61,10 @@ export const SentenceRecorder: React.FC<Props> = ({
   // Browser Web Speech API ASR references (exact ReVoice dual-engine pipeline)
   const recognitionRef = useRef<any>(null);
   const browserTranscriptRef = useRef<string>('');
+
+  useEffect(() => {
+    onEvaluationsChange?.(Object.values(evaluationsMap));
+  }, [evaluationsMap]);
 
   const currentSentence = sentences.find(s => s.id === selectedSentenceId) || sentences[0];
   const completedCount = Object.keys(evaluationsMap).length;
@@ -177,8 +187,14 @@ export const SentenceRecorder: React.FC<Props> = ({
         const wavBlob = pcmToWavBlob(pcmData, 16000);
         triggerAutoAudioDownload(wavBlob, currentSentence.id);
 
-        // 3. Client-side Whisper STT (language: 'hindi')
-        const rawWhisper = await transcribeAudio(pcmData, 'hindi');
+        // 3. Client-side Whisper STT (language: 'hindi'). If Whisper could not load on this
+        //    device, continue with browser ASR alone instead of discarding the recording.
+        let rawWhisper = '';
+        try {
+          rawWhisper = await transcribeAudio(pcmData, 'hindi');
+        } catch (whisperErr) {
+          console.warn('[Whisper] unavailable, using browser ASR only:', whisperErr);
+        }
         const promptWordCount = currentSentence.hindi.trim().split(/\s+/).filter(Boolean).length;
 
         let whisperDevanagari = '';
@@ -201,6 +217,14 @@ export const SentenceRecorder: React.FC<Props> = ({
           browserDevanagari,
           durationMs
         );
+        // Silent pauses inside the sentence (possible blocks) and recording noise level
+        const pauses = analyzePauses(pcmData);
+        evalResult.longestPauseMs = pauses.longestPauseMs;
+        evalResult.pauseCount = pauses.pauseCount;
+        evalResult.snrDb = pauses.snrDb;
+        if (pauses.longestPauseMs >= 1200) {
+          evalResult.detectedIssues.push('Long mid-sentence pause (possible block / hesitation)');
+        }
         evalResult.speakerId = speakerId.toUpperCase();
         evalResult.audioFilename = getAudioFileName(currentSentence.id);
         setRecentEval(evalResult);
@@ -267,150 +291,159 @@ export const SentenceRecorder: React.FC<Props> = ({
     onGenerateReport(list);
   };
 
+  const progressPct = Math.round((completedCount / sentences.length) * 100);
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* Top Banner: Quick Stats & Generate Report Button when >= 1 sentence completed */}
-      <div className="bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400 p-5 rounded-3xl shadow-lg text-white flex flex-col sm:flex-row items-center justify-between gap-4">
+    <div className="grid grid-cols-1 lg:grid-cols-[19rem_minmax(0,1fr)] gap-5 lg:gap-6 items-start animate-fade-up">
+      {/* Sidebar: child, progress, sentence list, report */}
+      <aside className="min-w-0 card p-4 md:p-5 lg:sticky lg:top-24 space-y-5">
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center text-2xl shadow-inner">
+          <div className="w-11 h-11 rounded-2xl bg-amber-100 flex items-center justify-center text-2xl" aria-hidden>
             🐰
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-xl font-black tracking-tight">Speech Practice Station</h2>
-              <span className="font-mono text-xs bg-white text-orange-700 font-black px-2 py-0.5 rounded-md shadow-xs">
-                {speakerId.toUpperCase()}
-              </span>
-            </div>
-            <p className="text-xs text-white/90 font-medium mt-0.5">
-              Child: <span className="font-bold underline">{childName}</span> • Recorded: <strong>{completedCount} of {sentences.length}</strong>
-            </p>
+          <div className="min-w-0">
+            <p className="eyebrow">Practice station</p>
+            <p className="font-display text-lg font-bold text-slate-900 truncate leading-tight">{childName}</p>
+            <p className="font-mono text-[11px] font-semibold text-brand-700">{speakerId.toUpperCase()}</p>
           </div>
         </div>
+
+        <div>
+          <div className="flex items-center justify-between text-xs mb-1.5">
+            <span className="font-medium text-slate-600">Recorded</span>
+            <span className="font-semibold text-slate-800 tabular-nums">{completedCount} of {sentences.length}</span>
+          </div>
+          <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+            <div className="h-full rounded-full bg-emerald-500 transition-[width] duration-500" style={{ width: `${progressPct}%` }} />
+          </div>
+        </div>
+
+        {/* All 5 sentences, any order */}
+        <nav aria-label="Sentences">
+          <p className="eyebrow mb-2 hidden lg:block">Choose any sentence</p>
+          <div className="flex lg:flex-col gap-2 overflow-x-auto lg:overflow-visible -mx-1 px-1 pb-1 lg:pb-0">
+            {sentences.map((s) => {
+              const isCompleted = !!evaluationsMap[s.id];
+              const isCurrent = s.id === selectedSentenceId;
+              const evalData = evaluationsMap[s.id];
+
+              return (
+                <button
+                  type="button"
+                  key={s.id}
+                  aria-current={isCurrent ? 'true' : undefined}
+                  aria-label={`Sentence ${s.id}: ${s.hindi}`}
+                  onClick={() => {
+                    setSelectedSentenceId(s.id);
+                    setRecentEval(evalData || null);
+                  }}
+                  className={`shrink-0 lg:w-full flex items-center gap-2 lg:gap-3 p-1.5 lg:p-3 rounded-2xl border text-left transition ${
+                    isCurrent
+                      ? 'border-brand-300 bg-brand-50 ring-1 ring-brand-300'
+                      : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+                  }`}
+                >
+                  <span
+                    className={`w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-sm font-bold ${
+                      isCompleted
+                        ? 'bg-emerald-500 text-white'
+                        : isCurrent
+                        ? 'bg-brand-600 text-white'
+                        : 'bg-slate-100 text-slate-500'
+                    }`}
+                  >
+                    {isCompleted ? <Check className="w-4 h-4" strokeWidth={3} /> : s.id}
+                  </span>
+                  <span className={`min-w-0 flex-1 ${isCompleted ? '' : 'hidden lg:block'}`}>
+                    <span className="hidden lg:block font-display text-[15px] font-semibold text-slate-800 truncate">
+                      {s.hindi}
+                    </span>
+                    <span className={`block text-xs truncate ${isCompleted ? 'text-emerald-700 font-medium' : 'text-slate-500'}`}>
+                      {isCompleted ? (
+                        <>
+                          {evalData.clarityPct}%<span className="hidden lg:inline"> clarity</span>
+                        </>
+                      ) : 'Tap to try'}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
 
         {/* Generate Report Button visible whenever at least 1 sentence has been spoken */}
-        {completedCount >= 1 ? (
-          <button
-            onClick={handleGenerateReportClick}
-            className="w-full sm:w-auto px-5 py-3 rounded-2xl bg-white text-orange-600 font-extrabold shadow-md hover:bg-orange-50 active:scale-95 transition-all flex items-center justify-center gap-2 text-sm border-2 border-white animate-bounce"
-          >
-            <FileText className="w-4 h-4 text-orange-600" />
-            Generate Diagnosis Report ({completedCount} Done) 🚀
-          </button>
-        ) : (
-          <div className="text-xs bg-black/15 px-3.5 py-1.5 rounded-xl font-medium text-white/90">
-            🎙️ Record any 1 sentence to unlock report
-          </div>
-        )}
-      </div>
-
-      {/* Grid of All 5 Sentences displayed together for easy choice */}
-      <div className="bg-white p-6 rounded-3xl shadow-md border border-slate-100">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-amber-500" />
-            Choose any sentence to practice (All 5 available):
-          </h3>
-          <span className="text-xs font-semibold text-slate-400">
-            Auto audio download on finish 📥
-          </span>
+        <div className="pt-4 border-t border-slate-100 space-y-2">
+          {completedCount >= 1 ? (
+            <button onClick={handleGenerateReportClick} className="btn-primary w-full h-12">
+              <FileText className="w-4 h-4" />
+              Generate Diagnosis Report
+            </button>
+          ) : (
+            <p className="text-xs text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-xl px-3 py-2.5 flex items-center gap-2">
+              <Lock className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+              Record any 1 sentence to unlock the report
+            </p>
+          )}
+          <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
+            <Download className="w-3 h-3" /> Each recording downloads automatically as WAV
+          </p>
         </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {sentences.map((s) => {
-            const isCompleted = !!evaluationsMap[s.id];
-            const isCurrent = s.id === selectedSentenceId;
-            const evalData = evaluationsMap[s.id];
-
-            return (
-              <div
-                key={s.id}
-                onClick={() => {
-                  setSelectedSentenceId(s.id);
-                  setRecentEval(evalData || null);
-                }}
-                className={`p-4 rounded-2xl border-2 cursor-pointer transition-all relative ${
-                  isCurrent
-                    ? 'border-blue-500 bg-blue-50/70 shadow-md ring-2 ring-blue-400/30'
-                    : isCompleted
-                    ? 'border-emerald-300 bg-emerald-50/40 hover:border-emerald-400'
-                    : 'border-slate-200 bg-slate-50/50 hover:border-blue-300'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full uppercase bg-white border border-slate-200 text-slate-600">
-                    Sentence #{s.id}
-                  </span>
-                  {isCompleted ? (
-                    <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
-                      <CheckCircle className="w-3 h-3" /> Completed ({evalData.clarityPct}% Clarity)
-                    </span>
-                  ) : (
-                    <span className="text-[11px] text-blue-600 font-bold">
-                      Tap to Try 🎤
-                    </span>
-                  )}
-                </div>
-
-                <p className="font-bold text-slate-800 text-base leading-snug font-sans">
-                  {s.hindi}
-                </p>
-                <p className="text-xs text-slate-500 italic mt-0.5">
-                  "{s.roman}"
-                </p>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      </aside>
 
       {/* Active Sentence Practice Card */}
-      <div className="bg-white p-6 md:p-8 rounded-3xl shadow-xl border-2 border-indigo-100">
-        <div className="flex items-center justify-between mb-4">
-          <span className="px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 font-extrabold text-xs uppercase tracking-wide">
-            Currently Speaking: Sentence #{currentSentence.id}
+      <section className="min-w-0 card overflow-hidden">
+        <div className="flex items-center justify-between gap-3 px-5 md:px-8 pt-5 md:pt-6">
+          <span className="eyebrow">
+            Sentence {currentSentence.id} <span className="text-slate-300">of {sentences.length}</span>
           </span>
           <button
             onClick={() => playTTSPrompt(currentSentence.hindi)}
-            className="flex items-center gap-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-xl border border-indigo-200 transition-all"
+            className="btn-secondary h-9 px-3.5 text-sm rounded-full"
           >
-            <Volume2 className="w-4 h-4 text-indigo-600" />
-            Listen Example 🔊
+            <Volume2 className="w-4 h-4 text-brand-600" />
+            Listen
           </button>
         </div>
 
         {/* Large Sentence Display */}
-        <div className="text-center py-5 px-6 bg-gradient-to-b from-indigo-50/50 to-blue-50/50 rounded-2xl border border-indigo-100/80 mb-6">
-          <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900 leading-snug font-sans mb-2">
+        <div className="px-5 md:px-10 pt-6 pb-8 text-center">
+          <h2 className="text-3xl md:text-[2.6rem] font-bold text-slate-900 leading-snug">
             {currentSentence.hindi}
           </h2>
-          <p className="text-base font-semibold text-indigo-700 italic">
-            "{currentSentence.roman}"
+          <p className="mt-2 text-base md:text-lg text-slate-500">
+            {currentSentence.roman}
+          </p>
+          <p className="mt-3 text-xs text-slate-400">
+            Can’t read yet? Tap <strong className="font-semibold text-slate-500">Listen</strong> and let the child repeat the sentence.
           </p>
         </div>
 
         {/* Mic Recording Button Area */}
-        <div className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-indigo-200 rounded-3xl bg-slate-50/60 mb-6">
+        <div className="mx-4 md:mx-8 mb-6 rounded-3xl bg-gradient-to-b from-slate-50 to-white border border-slate-100 py-8 px-4 flex flex-col items-center text-center min-h-[15rem] justify-center">
           {!isRecording && !isProcessing && (
             <>
               <button
                 disabled={!whisperReady}
                 onClick={startRecording}
-                className={`w-24 h-24 rounded-full flex flex-col items-center justify-center text-white shadow-xl transition-all duration-300 transform active:scale-90 ${
+                aria-label="Record"
+                className={`w-28 h-28 rounded-full flex flex-col items-center justify-center text-white transition duration-200 active:scale-95 ${
                   whisperReady
-                    ? 'bg-gradient-to-tr from-rose-500 to-pink-500 hover:from-rose-600 hover:to-pink-600 hover:scale-105 shadow-pink-500/30'
-                    : 'bg-slate-300 cursor-not-allowed shadow-none'
+                    ? 'bg-brand-600 hover:bg-brand-700 hover:scale-105 shadow-lift'
+                    : 'bg-slate-300 cursor-not-allowed'
                 }`}
               >
-                <Mic className="w-10 h-10" />
-                <span className="text-[10px] font-bold mt-1 uppercase">Record</span>
+                <Mic className="w-11 h-11" />
+                <span className="text-[11px] font-bold mt-1 uppercase tracking-wider">Record</span>
               </button>
-              <p className="mt-4 text-base font-extrabold text-slate-800">
+              <p className="mt-5 font-display text-lg font-semibold text-slate-800">
                 {whisperReady ? 'Tap to Speak Sentence' : 'AI Model Initializing...'}
               </p>
-              <p className="text-xs text-slate-500 mt-1 flex items-center gap-1 font-medium">
-                <Download className="w-3.5 h-3.5 text-blue-500" />
-                Will save as: <code className="font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-200">{getAudioFileName(currentSentence.id)}</code>
+              <p className="mt-1 text-xs text-slate-500 flex items-center gap-1.5">
+                Saves as
+                <code className="font-mono font-semibold text-slate-700 bg-white px-1.5 py-0.5 rounded-md border border-slate-200">
+                  {getAudioFileName(currentSentence.id)}
+                </code>
               </p>
             </>
           )}
@@ -418,73 +451,81 @@ export const SentenceRecorder: React.FC<Props> = ({
           {isRecording && (
             <>
               <div className="relative">
-                <span className="absolute -inset-3 rounded-full bg-rose-500/25 animate-ping"></span>
+                <span className="absolute inset-0 rounded-full bg-rose-500/40 motion-safe:animate-pulse-ring"></span>
+                <span className="absolute inset-0 rounded-full bg-rose-500/30 motion-safe:animate-pulse-ring [animation-delay:0.8s]"></span>
                 <button
                   onClick={stopRecording}
-                  className="relative w-24 h-24 rounded-full bg-rose-600 text-white flex flex-col items-center justify-center shadow-2xl shadow-rose-600/40 hover:bg-rose-700 active:scale-95"
+                  aria-label="Stop"
+                  className="relative w-28 h-28 rounded-full bg-rose-600 text-white flex flex-col items-center justify-center shadow-xl shadow-rose-600/30 hover:bg-rose-700 active:scale-95 transition"
                 >
                   <Square className="w-9 h-9 fill-current" />
-                  <span className="text-[10px] font-bold mt-1 uppercase">Stop</span>
+                  <span className="text-[11px] font-bold mt-1 uppercase tracking-wider">Stop</span>
                 </button>
               </div>
-              <p className="mt-4 text-base font-extrabold text-rose-600 animate-pulse flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-rose-500"></span>
-                Child is Speaking... Tap when finished!
+              <div className="mt-6 flex items-end gap-1 h-6" aria-hidden>
+                {[0, 0.15, 0.3, 0.1, 0.25, 0.05, 0.2].map((d, i) => (
+                  <span
+                    key={i}
+                    className="w-1.5 h-full rounded-full bg-rose-400 origin-bottom motion-safe:animate-level"
+                    style={{ animationDelay: `${d}s` }}
+                  />
+                ))}
+              </div>
+              <p className="mt-3 font-display text-lg font-semibold text-rose-600">
+                Child is speaking… tap Stop when finished
               </p>
             </>
           )}
 
           {isProcessing && (
-            <div className="flex flex-col items-center py-4">
-              <div className="w-14 h-14 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-              <p className="mt-3 text-sm font-extrabold text-slate-800">Whisper Devanagari raw transcription...</p>
-              <p className="text-xs text-slate-400">Capturing phonetic stutters with ReVoice clarity model</p>
-            </div>
+            <>
+              <div className="w-14 h-14 border-4 border-brand-100 border-t-brand-600 rounded-full animate-spin"></div>
+              <p className="mt-5 font-display text-lg font-semibold text-slate-800">Listening carefully…</p>
+              <p className="text-sm text-slate-500">Whisper is transcribing the Hindi speech and checking clarity</p>
+            </>
           )}
         </div>
 
-        {/* Child Friendly Cheer & Cartoon Celebration Banner */}
+        {/* Child Friendly Cheer & Results */}
         {recentEval && (
-          <div className="space-y-5 animate-in fade-in duration-300">
+          <div className="border-t border-slate-100 bg-slate-50/50 px-4 md:px-8 py-6 space-y-5 animate-fade-up">
             {/* Encouraging Cartoon Toast */}
-            <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-100 via-yellow-100 to-orange-100 border border-amber-200 flex items-center gap-4">
-              <div className="text-4xl animate-bounce">{cheerMsg.emoji}</div>
-              <div>
-                <h4 className="font-black text-amber-900 text-base flex flex-wrap items-center gap-2">
-                  {cheerMsg.title}
-                  <span className="text-xs font-mono font-bold text-amber-900 bg-white/90 px-2.5 py-0.5 rounded-full border border-amber-300">
-                    💾 Saved: {recentEval.audioFilename || getAudioFileName(currentSentence.id)}
-                  </span>
-                </h4>
-                <p className="text-xs text-amber-800 font-medium">
-                  {cheerMsg.phrase}
-                </p>
+            <div className="flex items-center gap-4 p-4 rounded-2xl bg-gradient-to-r from-amber-100 to-orange-50 border border-amber-200/70">
+              <div className="w-12 h-12 shrink-0 rounded-2xl bg-white/80 flex items-center justify-center text-3xl motion-safe:animate-bounce">
+                {cheerMsg.emoji}
               </div>
+              <div className="min-w-0 flex-1">
+                <h4 className="font-bold text-amber-900 text-lg leading-tight">{cheerMsg.title}</h4>
+                <p className="text-sm text-amber-800">{cheerMsg.phrase}</p>
+              </div>
+              <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-mono font-semibold text-amber-900 bg-white/80 px-2.5 py-1 rounded-full border border-amber-200">
+                <Download className="w-3 h-3" />
+                {recentEval.audioFilename || getAudioFileName(currentSentence.id)}
+              </span>
             </div>
 
-            {/* Exactly what the child said (Clean Devanagari Hindi STT) */}
-            <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-black text-slate-500 uppercase tracking-wider">
-                  Devanagari Hindi Speech Transcript:
-                </span>
-                <span className="text-xs font-mono font-bold bg-indigo-100 text-indigo-800 px-2.5 py-0.5 rounded-full">
+            {/* Target vs what the child said (Clean Devanagari Hindi STT) */}
+            <div className="rounded-2xl bg-white border border-slate-200/80 divide-y divide-slate-100">
+              <div className="flex items-center justify-between px-4 py-2.5">
+                <span className="eyebrow">Transcript</span>
+                <span className="text-[11px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
                   Browser ASR + Whisper
                 </span>
               </div>
-
-              <div className="p-4 rounded-xl bg-white border border-slate-300 text-slate-900 font-sans text-xl font-bold shadow-sm">
-                "{recentEval.spokenWhisperText}"
+              <div className="px-4 py-3 grid grid-cols-[4.5rem_1fr] gap-x-3 gap-y-2 items-baseline">
+                <span className="text-xs font-medium text-slate-400">Target</span>
+                <p className="font-display text-lg text-slate-500 leading-snug">{recentEval.targetSentence}</p>
+                <span className="text-xs font-medium text-slate-400">Heard</span>
+                <p className="font-display text-xl font-bold text-slate-900 leading-snug">{recentEval.spokenWhisperText}</p>
               </div>
-
               {recentEval.detectedIssues.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-1.5">
+                <div className="px-4 py-3 flex flex-wrap gap-1.5">
                   {recentEval.detectedIssues.map((issue, idx) => (
                     <span
                       key={idx}
-                      className="text-xs font-bold px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-300 flex items-center gap-1"
+                      className="text-xs font-medium px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1.5"
                     >
-                      <Activity className="w-3.5 h-3.5 text-amber-600" />
+                      <Activity className="w-3.5 h-3.5 text-amber-500" />
                       {issue}
                     </span>
                   ))}
@@ -493,32 +534,38 @@ export const SentenceRecorder: React.FC<Props> = ({
             </div>
 
             {/* Metric Meters (ReVoice Clarity Engine) */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="p-4 rounded-2xl bg-indigo-50 border border-indigo-200 text-center">
-                <span className="text-xs font-bold text-slate-500 block mb-1">Acoustic Clarity</span>
-                <span className="text-3xl font-black text-indigo-700">{recentEval.clarityPct}%</span>
-                <span className="text-[11px] text-indigo-600 block mt-0.5 font-medium">ReVoice Clarity Engine</span>
-              </div>
-              <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-center">
-                <span className="text-xs font-bold text-slate-500 block mb-1">Repetition Score</span>
-                <span className="text-3xl font-black text-emerald-700">{recentEval.repetitionPct}%</span>
-                <span className="text-[11px] text-emerald-600 block mt-0.5 font-medium">Syllable Consistency</span>
-              </div>
-              <div className="p-4 rounded-2xl bg-purple-50 border border-purple-200 text-center">
-                <span className="text-xs font-bold text-slate-500 block mb-1">Sound Sustain</span>
-                <span className="text-3xl font-black text-purple-700">{recentEval.prolongationPct}%</span>
-                <span className="text-[11px] text-purple-600 block mt-0.5 font-medium">Prolongation Control</span>
-              </div>
+            <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 ${recentEval.accuracyPct !== undefined ? 'xl:grid-cols-4' : 'xl:grid-cols-3'}`}>
+              <MetricMeter metric="clarity" value={recentEval.clarityPct} />
+              {recentEval.accuracyPct !== undefined && <MetricMeter metric="accuracy" value={recentEval.accuracyPct} />}
+              <MetricMeter metric="repetition" value={recentEval.repetitionPct} />
+              <MetricMeter metric="sustain" value={recentEval.prolongationPct} />
             </div>
 
+            {(recentEval.longestPauseMs !== undefined || recentEval.snrDb !== undefined) && (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-slate-500">
+                {recentEval.longestPauseMs !== undefined && (
+                  <span>
+                    Longest pause <strong className="text-slate-700 tabular-nums">{(recentEval.longestPauseMs / 1000).toFixed(1)} s</strong>
+                  </span>
+                )}
+                {recentEval.missedWords && recentEval.missedWords.length > 0 && (
+                  <span>
+                    Missed or changed: <strong className="font-display text-sm text-slate-700">{recentEval.missedWords.join(', ')}</strong>
+                  </span>
+                )}
+                {recentEval.snrDb !== undefined && recentEval.snrDb < 15 && (
+                  <span className="flex items-center gap-1 font-medium text-amber-800">
+                    <AlertTriangle className="w-3.5 h-3.5" /> Noisy recording ({recentEval.snrDb} dB) — try a quieter spot
+                  </span>
+                )}
+              </div>
+            )}
+
             {/* Quick Actions */}
-            <div className="flex flex-col sm:flex-row gap-3 pt-2">
-              <button
-                onClick={startRecording}
-                className="flex-1 py-3 px-4 rounded-xl border-2 border-slate-300 font-bold text-slate-700 hover:bg-slate-100 active:scale-95 transition-all flex items-center justify-center gap-2"
-              >
-                <RotateCcw className="w-4 h-4 text-slate-600" />
-                Try Sentence #{currentSentence.id} Again
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button onClick={startRecording} className="btn-secondary h-12 px-5 flex-1">
+                <RotateCcw className="w-4 h-4" />
+                Try again
               </button>
 
               {currentSentence.id < sentences.length && (
@@ -527,23 +574,24 @@ export const SentenceRecorder: React.FC<Props> = ({
                     setSelectedSentenceId(currentSentence.id + 1);
                     setRecentEval(evaluationsMap[currentSentence.id + 1] || null);
                   }}
-                  className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-extrabold shadow-md hover:from-blue-700 hover:to-indigo-700 active:scale-95 transition-all flex items-center justify-center gap-2"
+                  className="btn-primary h-12 px-5 flex-1"
                 >
-                  Next: Sentence #{currentSentence.id + 1} ➡️
+                  Next sentence
+                  <ArrowRight className="w-4 h-4" />
                 </button>
               )}
 
               <button
                 onClick={handleGenerateReportClick}
-                className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 text-white font-extrabold shadow-md hover:from-orange-600 hover:to-amber-600 active:scale-95 transition-all flex items-center justify-center gap-2"
+                className="btn h-12 px-5 flex-1 bg-slate-900 text-white hover:bg-slate-800"
               >
                 <FileText className="w-4 h-4" />
-                Generate Diagnosis Report Now
+                Generate report
               </button>
             </div>
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 };

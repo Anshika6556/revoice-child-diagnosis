@@ -1,4 +1,6 @@
-import { SentenceItem, SentenceEvaluation, DiagnosticReport, ChildProfile } from '../types';
+import { SentenceItem, SentenceEvaluation, DiagnosticReport, ChildProfile, ScreeningTasks } from '../types';
+import { wordAccuracy } from './articulation';
+import { breathStatus, buildScreening, ddkStatus, namingSummary, voiceQualityStatus } from './screening';
 
 export const ASSESSMENT_SENTENCES: SentenceItem[] = [
   {
@@ -146,6 +148,17 @@ export function evaluateDualSentence(
     detectedIssues.push('Omitted words / Incomplete phrase');
   }
 
+  // Word accuracy: were the right words said? Take the better of the two engines,
+  // since an ASR mistake is more likely than a child's error.
+  const accuracy = [browserTokens, whisperTokens]
+    .filter(t => t.length > 0)
+    .map(t => wordAccuracy(pTokens, t))
+    .reduce<ReturnType<typeof wordAccuracy> | null>((best, a) => (!best || a.accuracyPct > best.accuracyPct ? a : best), null)
+    ?? { accuracyPct: 0, missedWords: pTokens };
+  if (accuracy.accuracyPct < 70 && effectiveTokens.length >= pTokens.length * 0.6) {
+    detectedIssues.push('Word substitutions / Mispronunciations');
+  }
+
   let feedback = 'Clear and fluent expression!';
   if (cl.clarity < 65) {
     feedback = 'Noticeable stuttering & disfluency. Practice smooth easy-onset speech.';
@@ -163,7 +176,9 @@ export function evaluateDualSentence(
     repetitionPct: cl.repetition,
     prolongationPct: cl.prolongation,
     detectedIssues,
-    feedback
+    feedback,
+    accuracyPct: accuracy.accuracyPct,
+    missedWords: accuracy.missedWords
   };
 }
 
@@ -183,7 +198,8 @@ export function evaluateSentence(
  */
 export function generateDiagnosticReport(
   profile: ChildProfile,
-  evaluations: SentenceEvaluation[]
+  evaluations: SentenceEvaluation[],
+  tasks: ScreeningTasks = {}
 ): DiagnosticReport {
   const total = evaluations.length || 1;
   const avgClarity = Math.round(evaluations.reduce((sum, e) => sum + e.clarityPct, 0) / total);
@@ -195,12 +211,20 @@ export function generateDiagnosticReport(
   const stutterCount = evaluations.filter(e => e.repetitionPct < 75).length;
   const prolongCount = evaluations.filter(e => e.prolongationPct < 75).length;
   const omittedCount = evaluations.filter(e => e.detectedIssues.some(i => i.includes('Omitted'))).length;
+  const accuracies = evaluations.map(e => e.accuracyPct).filter((v): v is number => v !== undefined);
+  const avgAccuracy = accuracies.length ? Math.round(accuracies.reduce((a, b) => a + b, 0) / accuracies.length) : undefined;
+
+  const screening = buildScreening(profile.age, evaluations, tasks);
+  const domainStatus = (key: string) => screening.domains.find(d => d.key === key)?.status;
+  const flagged = (key: string) => domainStatus(key) === 'monitor' || domainStatus(key) === 'refer';
+  const breathTested = breathStatus(profile.age, tasks.voice) !== 'not_tested';
 
   const flags = {
     stuttering: stutterCount >= 2,
     prolongation: prolongCount >= 2,
-    breathSustain: prolongCount >= 2,
-    articulation: omittedCount >= 2 || avgClarity < 70,
+    // Measured directly from the sustained "आ" when available
+    breathSustain: breathTested ? flagged('breath') : prolongCount >= 2,
+    articulation: omittedCount >= 2 || avgClarity < 70 || flagged('sounds'),
   };
 
   let primaryIssue = 'Clear Natural Speech';
@@ -221,12 +245,20 @@ export function generateDiagnosticReport(
   } else if (flags.stuttering) {
     primaryIssue = 'Repetition-Predominant Stuttering';
     description = 'Frequent syllable and word-level repetitions observed before stabilizing on the target words.';
-  } else if (flags.prolongation || flags.breathSustain) {
+  } else if (flags.prolongation || (flags.breathSustain && !breathTested)) {
     primaryIssue = 'Breath Sustain & Sound Prolongation';
     description = 'Vowels and fricative sounds are prolonged past normal duration, pointing to vocal tension or low respiratory support.';
+  } else if (flags.breathSustain) {
+    primaryIssue = 'Reduced Breath Support for Speech';
+    description = 'The child could not sustain "आ" for as long as expected for their age, suggesting limited breath support for speech.';
   } else if (flags.articulation) {
     primaryIssue = 'Word Articulation & Sound Clarity';
     description = 'Phonetic substitutions or omissions observed in multisyllabic target words.';
+  }
+
+  // A specific finding should never be presented as "Optimal".
+  if (primaryIssue !== 'Clear Natural Speech' && severity === 'Optimal') {
+    severity = 'Mild';
   }
 
   const recommendations = [];
@@ -264,6 +296,41 @@ export function generateDiagnosticReport(
     });
   }
 
+  if (voiceQualityStatus(tasks.voice) === 'monitor' || voiceQualityStatus(tasks.voice) === 'refer') {
+    recommendations.push({
+      title: 'Voice Care & Healthy Voicing',
+      advice: 'The voice sounded rough or breathy on the sustained "आ". If hoarseness lasts more than 2 weeks, consult an ENT doctor.',
+      activities: [
+        'Water breaks: Sip water through the school day to keep the voice box moist.',
+        'Quiet voice games: Use a "library voice" indoors and avoid shouting or loud imitation sounds.'
+      ]
+    });
+  }
+
+  if ([ddkStatus(profile.age, tasks.ddk?.amr), ddkStatus(profile.age, tasks.ddk?.smr)].some(s => s === 'monitor' || s === 'refer')) {
+    recommendations.push({
+      title: 'Speech Motor Rhythm Practice',
+      advice: 'Repeating syllables quickly and evenly was harder than expected for age.',
+      activities: [
+        'Drum talk: Tap a drum once for each syllable — "पा-टा-का" slowly, then a little faster.',
+        'Copycat chains: Parent says two syllables ("पा-टा"), child copies; add one more syllable when easy.'
+      ]
+    });
+  }
+
+  const naming = namingSummary(tasks.naming);
+  if (naming.soundsToWatch.length > 0) {
+    const sounds = naming.soundsToWatch.slice(0, 3).join(', ');
+    recommendations.push({
+      title: `Target Sound Practice (${sounds})`,
+      advice: `These sounds were missed in more than one picture name: ${sounds}.`,
+      activities: [
+        'Sound hunt: Find 5 things at home that start with the practice sound and name them together.',
+        'Slow & clear: Say each practice word 3 times slowly while looking in a mirror.'
+      ]
+    });
+  }
+
   return {
     profile,
     date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
@@ -278,6 +345,9 @@ export function generateDiagnosticReport(
       description,
       flags
     },
-    recommendations
+    recommendations,
+    avgAccuracy,
+    tasks,
+    screening
   };
 }

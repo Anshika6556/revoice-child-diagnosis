@@ -10,6 +10,17 @@ const CANDIDATES: Candidate[] = [
     { model: 'Xenova/whisper-base', dtype: 'fp32', device: 'wasm', label: 'base/fp32/wasm' },
 ];
 
+// A failed WebGPU attempt leaves onnxruntime unable to fall back to WASM in the same
+// worker, so only try WebGPU when an adapter actually exists.
+async function hasWebGPU(): Promise<boolean> {
+    try {
+        const gpu = (self.navigator as any).gpu;
+        return !!gpu && !!(await gpu.requestAdapter());
+    } catch {
+        return false;
+    }
+}
+
 class PipelineFactory {
     static task = 'automatic-speech-recognition' as const;
     static instance: any = null;
@@ -19,7 +30,12 @@ class PipelineFactory {
         if (this.instance) return this.instance;
 
         const failures: string[] = [];
+        const webgpuOk = await hasWebGPU();
         for (const cand of CANDIDATES) {
+            if (cand.device === 'webgpu' && !webgpuOk) {
+                failures.push(`${cand.label}: no WebGPU adapter`);
+                continue;
+            }
             try {
                 this.instance = await pipeline(this.task, cand.model, {
                     progress_callback,

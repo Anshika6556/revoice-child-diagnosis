@@ -1,11 +1,29 @@
 import React, { useState } from 'react';
 import { ChildProfile } from '../types';
-import { ShieldCheck, User, Calendar, Phone, HeartHandshake } from 'lucide-react';
+import {
+  ShieldCheck,
+  User,
+  Phone,
+  Baby,
+  Sparkles,
+  ClipboardList,
+  Mic,
+  FileBarChart,
+  Lightbulb,
+  AlertCircle,
+  ArrowRight
+} from 'lucide-react';
 
 interface Props {
   onComplete: (profile: ChildProfile) => void;
   whisperStatus: string;
 }
+
+const GENDER_OPTIONS = [
+  { value: 'Male', label: 'Boy' },
+  { value: 'Female', label: 'Girl' },
+  { value: 'Other', label: 'Other' },
+];
 
 export const SignupConsent: React.FC<Props> = ({ onComplete, whisperStatus }) => {
   const [name, setName] = useState('');
@@ -58,145 +76,198 @@ export const SignupConsent: React.FC<Props> = ({ onComplete, whisperStatus }) =>
     });
   };
 
+  const modelReady = whisperStatus.startsWith('Whisper Ready');
+
   return (
-    <div className="max-w-xl mx-auto my-8 p-8 bg-white/95 backdrop-blur-md rounded-3xl shadow-xl border border-blue-100 transition-all">
-      <div className="mb-6">
-        <h1 className="text-2xl font-black text-slate-800 tracking-tight">Child Speech Analysis</h1>
-        <p className="text-sm text-slate-500">Clinical Vocal Clarity Diagnostic</p>
-      </div>
-
-      <div className="mb-6 p-4 rounded-2xl bg-blue-50/70 border border-blue-100/80 flex flex-col sm:flex-row sm:items-center justify-between text-xs text-blue-800 gap-2">
-        <div className="flex items-center gap-2">
-          <span className="relative flex h-2.5 w-2.5">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-600"></span>
-          </span>
-          <span className="font-semibold">AI Whisper:</span>
-          <span className="font-mono text-xs bg-white/80 px-2 py-0.5 rounded-full border border-blue-200">
-            {whisperStatus}
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5 self-end sm:self-auto">
-          <span className="text-slate-500 font-medium">Assigned Speaker ID:</span>
-          <span className="font-mono font-black text-xs bg-indigo-600 text-white px-2.5 py-0.5 rounded-md shadow-xs">
-            {speakerId}
-          </span>
-        </div>
-      </div>
-
-      <form onSubmit={handleSubmit} className="space-y-4">
-        {/* Child's Details */}
+    <div className="grid lg:grid-cols-5 gap-6 lg:gap-10 items-start max-w-5xl mx-auto animate-fade-up">
+      {/* Intro */}
+      <section className="lg:col-span-2 lg:sticky lg:top-24 space-y-6 pt-2">
         <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
-            <User className="w-4 h-4 text-blue-600" />
-            Child's Full Name
-          </label>
-          <input
-            type="text"
-            required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Aman Verma"
-            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all text-slate-800"
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
-              <Calendar className="w-4 h-4 text-blue-600" />
-              Age (Years)
-            </label>
-            <input
-              type="number"
-              min={3}
-              max={16}
-              value={age}
-              onChange={(e) => setAge(Number(e.target.value))}
-              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all text-slate-800"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Gender</label>
-            <select
-              value={gender}
-              onChange={(e) => setGender(e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all text-slate-800 bg-white"
-            >
-              <option value="Male">Boy (Male)</option>
-              <option value="Female">Girl (Female)</option>
-              <option value="Other">Other</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Parent / Guardian Information */}
-        <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
-            <User className="w-4 h-4 text-indigo-600" />
-            Parent / Guardian's Full Name
-          </label>
-          <input
-            type="text"
-            required
-            value={parentName}
-            onChange={(e) => setParentName(e.target.value)}
-            placeholder="e.g. Rajesh Verma"
-            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition-all text-slate-800"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
-            <Phone className="w-4 h-4 text-indigo-600" />
-            Mobile Number
-          </label>
-          <input
-            type="tel"
-            required
-            pattern="[0-9]{10}"
-            value={parentMobile}
-            onChange={(e) => setParentMobile(e.target.value)}
-            placeholder="e.g. 9876543210"
-            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition-all text-slate-800 font-mono"
-          />
-        </div>
-
-        {/* Legal Consent Checkbox */}
-        <div className="pt-1">
-          <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80">
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={consent}
-                onChange={(e) => setConsent(e.target.checked)}
-                className="mt-1 w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
-              />
-              <div className="text-xs text-slate-600 leading-relaxed select-none">
-                <span className="font-semibold text-slate-800 flex items-center gap-1">
-                  <ShieldCheck className="w-4 h-4 text-emerald-600" /> Parent / Guardian Consent
-                </span>
-                I confirm that I am the parent or authorized guardian and above 18 years of age. I consent to provide voice recording and AI analysis for evaluating speech clarity diagnostics of my child. I understand that the data will be used solely for research and clinical purposes, and will not be shared with third parties without my consent.
-              </div>
-            </label>
-          </div>
-        </div>
-
-        {error && (
-          <p className="text-xs font-medium text-rose-600 bg-rose-50 px-3 py-2 rounded-lg border border-rose-100">
-            {error}
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-brand-50 text-brand-700 text-xs font-semibold">
+            <Sparkles className="w-3.5 h-3.5" /> Hindi speech check-up
+          </span>
+          <h1 className="mt-3 text-3xl md:text-4xl font-bold text-slate-900 tracking-tight leading-[1.1]">
+            Child Speech Analysis
+          </h1>
+          <p className="mt-2 text-slate-600 leading-relaxed">
+            A short, playful clarity check. Your child reads five simple Hindi sentences aloud and you get a clear report with home practice ideas.
           </p>
-        )}
+        </div>
 
-        <button
-          type="submit"
-          className="w-full py-3.5 px-6 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold shadow-lg shadow-blue-500/25 hover:from-blue-700 hover:to-indigo-700 active:scale-[0.99] transition-all flex items-center justify-center gap-2 text-base"
-        >
-          <HeartHandshake className="w-5 h-5" />
-          Start Speech Assessment
-        </button>
-      </form>
+        <ol className="space-y-3">
+          {[
+            { icon: ClipboardList, title: 'Add details', text: 'Child and guardian information with consent.' },
+            { icon: Mic, title: 'Record sentences', text: 'Speak any of the 5 sentences — retry anytime.' },
+            { icon: FileBarChart, title: 'Get the report', text: 'Clarity scores, findings and a home plan.' },
+          ].map(({ icon: Icon, title, text }, i) => (
+            <li key={title} className="flex gap-3">
+              <span className="w-9 h-9 shrink-0 rounded-xl bg-white border border-slate-200 shadow-card flex items-center justify-center text-brand-600">
+                <Icon className="w-[18px] h-[18px]" />
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-slate-800">
+                  <span className="text-slate-400 mr-1">{i + 1}.</span>
+                  {title}
+                </p>
+                <p className="text-sm text-slate-500">{text}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+
+        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200/70 text-sm text-amber-900 flex gap-3">
+          <Lightbulb className="w-5 h-5 shrink-0 text-amber-500 mt-0.5" />
+          <p>
+            <strong className="font-semibold">Tip:</strong> Find a quiet room and hold the device about an arm’s length from your child.
+          </p>
+        </div>
+      </section>
+
+      {/* Form */}
+      <section className="lg:col-span-3 card p-6 md:p-8">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-5 mb-6 border-b border-slate-100">
+          <div className="flex items-center gap-2 text-xs text-slate-600">
+            <span className="relative flex h-2.5 w-2.5">
+              {!modelReady && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>}
+              <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${modelReady ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+            </span>
+            <span className="font-medium">{whisperStatus}</span>
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-slate-500">Speaker ID</span>
+            <span className="font-mono font-bold text-brand-700 bg-brand-50 border border-brand-100 px-2 py-0.5 rounded-md">
+              {speakerId}
+            </span>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-7">
+          {/* Child's Details */}
+          <fieldset className="space-y-4">
+            <legend className="eyebrow mb-3 flex items-center gap-2">
+              <Baby className="w-4 h-4 text-brand-500" /> About the child
+            </legend>
+            <div>
+              <label htmlFor="child-name" className="label">Full name</label>
+              <input
+                id="child-name"
+                type="text"
+                required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Aman Verma"
+                className="field"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-[8rem_1fr] gap-4">
+              <div>
+                <label htmlFor="child-age" className="label">Age (years)</label>
+                <input
+                  id="child-age"
+                  type="number"
+                  min={3}
+                  max={16}
+                  value={age}
+                  onChange={(e) => setAge(Number(e.target.value))}
+                  className="field tabular-nums"
+                />
+              </div>
+
+              <div>
+                <span className="label" id="gender-label">Gender</span>
+                <div role="radiogroup" aria-labelledby="gender-label" className="grid grid-cols-3 gap-1 p-1 h-12 rounded-xl bg-slate-100">
+                  {GENDER_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={gender === opt.value}
+                      onClick={() => setGender(opt.value)}
+                      className={`rounded-lg text-sm font-semibold transition ${
+                        gender === opt.value ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </fieldset>
+
+          {/* Parent / Guardian Information */}
+          <fieldset className="space-y-4">
+            <legend className="eyebrow mb-3 flex items-center gap-2">
+              <User className="w-4 h-4 text-brand-500" /> Parent / guardian
+            </legend>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="parent-name" className="label">Full name</label>
+                <input
+                  id="parent-name"
+                  type="text"
+                  required
+                  value={parentName}
+                  onChange={(e) => setParentName(e.target.value)}
+                  placeholder="e.g. Rajesh Verma"
+                  className="field"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="parent-mobile" className="label">Mobile number</label>
+                <div className="relative">
+                  <Phone className="w-4 h-4 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    id="parent-mobile"
+                    type="tel"
+                    inputMode="numeric"
+                    required
+                    pattern="[0-9]{10}"
+                    value={parentMobile}
+                    onChange={(e) => setParentMobile(e.target.value)}
+                    placeholder="9876543210"
+                    className="field pl-10 tabular-nums tracking-wide"
+                  />
+                </div>
+              </div>
+            </div>
+          </fieldset>
+
+          {/* Legal Consent Checkbox */}
+          <label
+            className={`flex items-start gap-3 p-4 rounded-2xl border cursor-pointer transition ${
+              consent ? 'bg-emerald-50/60 border-emerald-300' : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+            }`}
+          >
+            <input
+              type="checkbox"
+              checked={consent}
+              onChange={(e) => setConsent(e.target.checked)}
+              className="mt-0.5 w-5 h-5 shrink-0 accent-emerald-600 cursor-pointer"
+            />
+            <div className="text-sm text-slate-600 leading-relaxed select-none">
+              <span className="font-semibold text-slate-800 flex items-center gap-1.5 mb-1">
+                <ShieldCheck className="w-4 h-4 text-emerald-600" /> Parent / Guardian Consent
+              </span>
+              I confirm that I am the parent or authorized guardian and above 18 years of age. I consent to provide voice recording and AI analysis for evaluating speech clarity diagnostics of my child. I understand that the data will be used solely for research and clinical purposes, and will not be shared with third parties without my consent.
+            </div>
+          </label>
+
+          {error && (
+            <p role="alert" className="flex items-center gap-2 text-sm font-medium text-rose-700 bg-rose-50 px-4 py-3 rounded-xl border border-rose-200">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              {error}
+            </p>
+          )}
+
+          <button type="submit" className="btn-primary w-full h-14 text-base">
+            Start Speech Assessment
+            <ArrowRight className="w-5 h-5" />
+          </button>
+        </form>
+      </section>
     </div>
   );
 };

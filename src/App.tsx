@@ -1,17 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { ChildProfile, SentenceEvaluation, DiagnosticReport } from './types';
+import { ChildProfile, SentenceEvaluation, DiagnosticReport, ScreeningTasks } from './types';
 import { ASSESSMENT_SENTENCES, generateDiagnosticReport } from './lib/speechAnalysis';
 import { initWhisper, getWhisperBackend } from './lib/whisper';
-import { saveSpeakerProfile, saveDiagnosticAssessment } from './lib/dbService';
+import { saveSpeakerProfile, saveDiagnosticAssessment, saveScreeningResult } from './lib/dbService';
 import { SignupConsent } from './components/SignupConsent';
-import { SentenceRecorder } from './components/SentenceRecorder';
+import { AssessmentStation } from './components/AssessmentStation';
 import { ReportView } from './components/ReportView';
+import { AudioLines, Check, LogOut } from 'lucide-react';
 
 const STORAGE_KEYS = {
   PROFILE: 'revoice_active_profile',
   REPORT: 'revoice_active_report',
   EVALS: 'revoice_active_evals',
 };
+
+const STEPS = ['Details', 'Record', 'Report'];
 
 export function App() {
   // State initialization from localStorage so page reload does NOT lose assessment or report!
@@ -62,14 +65,16 @@ export function App() {
     saveSpeakerProfile(prof).catch(err => console.warn('[DB] speaker save caught:', err));
   };
 
-  const handleAllSentencesDone = (evaluations: SentenceEvaluation[]) => {
+  const handleAllSentencesDone = (evaluations: SentenceEvaluation[], tasks: ScreeningTasks = {}) => {
     if (!profile) return;
-    const finalReport = generateDiagnosticReport(profile, evaluations);
+    const finalReport = generateDiagnosticReport(profile, evaluations, tasks);
     setReport(finalReport);
     localStorage.setItem(STORAGE_KEYS.REPORT, JSON.stringify(finalReport));
     localStorage.setItem(STORAGE_KEYS.EVALS, JSON.stringify(evaluations));
     // Save to Supabase diagnostic_assessments table
     saveDiagnosticAssessment(finalReport).catch(err => console.warn('[DB] report save caught:', err));
+    // Screening protocol results (opt-in table, see supabase/screening_results.sql)
+    saveScreeningResult(finalReport).catch(err => console.warn('[DB] screening save caught:', err));
   };
 
   // Explicit Logout / Complete Session
@@ -86,39 +91,87 @@ export function App() {
     setReport(null);
   };
 
+  const step = report ? 3 : profile ? 2 : 1;
+  // whisperReady is also set when loading fails; a loaded model always reports its backend.
+  const modelState = !whisperReady ? 'loading' : getWhisperBackend() ? 'ready' : 'offline';
+  const downloadPct = Number(whisperStatus.match(/(\d+)%/)?.[1] ?? 0);
+
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
+    <div className="min-h-screen bg-canvas text-slate-800 flex flex-col font-sans print:bg-white">
       {/* Top Navbar */}
-      <header className="bg-white border-b border-slate-200/80 px-6 py-4 sticky top-0 z-30 shadow-xs">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div>
-              <span className="font-extrabold text-2xl text-indigo-700 tracking-tight flex items-center gap-2">
-                ReVoice <span className="text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-bold uppercase tracking-wider">Diagnosis</span>
-              </span>
-              <p className="text-[11px] text-slate-500 font-medium">Child Speech Assessment</p>
+      <header className="bg-white/85 backdrop-blur-md border-b border-slate-200/70 sticky top-0 z-30 print:hidden">
+        <div className="max-w-6xl mx-auto px-4 md:px-6 h-16 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-brand-600 text-white flex items-center justify-center shadow-sm shadow-brand-600/30">
+              <AudioLines className="w-5 h-5" />
+            </div>
+            <div className="leading-tight">
+              <span className="font-display font-bold text-xl text-slate-900 tracking-tight">ReVoice</span>
+              <p className="text-[11px] text-slate-500 font-medium -mt-0.5">Child Speech Assessment</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <span className="hidden sm:inline text-xs px-3 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-700 font-mono">
-              {whisperStatus}
+          <ol className="hidden md:flex items-center gap-1 text-sm" aria-label="Progress">
+            {STEPS.map((label, i) => {
+              const n = i + 1;
+              const done = n < step;
+              const active = n === step;
+              return (
+                <li key={label} className="flex items-center gap-1">
+                  {i > 0 && <span className={`w-8 h-px ${done || active ? 'bg-brand-300' : 'bg-slate-200'}`} />}
+                  <span
+                    aria-current={active ? 'step' : undefined}
+                    className={`flex items-center gap-2 px-2.5 py-1 rounded-full font-medium ${
+                      active ? 'bg-brand-50 text-brand-700' : done ? 'text-slate-600' : 'text-slate-400'
+                    }`}
+                  >
+                    <span
+                      className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold ${
+                        active ? 'bg-brand-600 text-white' : done ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-400'
+                      }`}
+                    >
+                      {done ? <Check className="w-3 h-3" strokeWidth={3} /> : n}
+                    </span>
+                    {label}
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+
+          <div className="flex items-center gap-2">
+            <span
+              title={whisperStatus}
+              className="hidden sm:inline-flex items-center gap-2 h-8 px-3 rounded-full bg-slate-50 border border-slate-200 text-xs font-medium text-slate-600"
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  modelState === 'ready' ? 'bg-emerald-500' : modelState === 'offline' ? 'bg-slate-400' : 'bg-amber-500 animate-pulse'
+                }`}
+              />
+              {modelState === 'ready' ? 'AI ready' : modelState === 'offline' ? 'Basic mode' : downloadPct ? `Loading AI ${downloadPct}%` : 'Loading AI'}
             </span>
 
             {profile && (
               <button
                 onClick={handleLogout}
-                className="px-3.5 py-1.5 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-all"
+                className="btn h-8 px-3 text-xs text-slate-600 hover:text-rose-700 hover:bg-rose-50 rounded-full"
               >
-                Log Out
+                <LogOut className="w-3.5 h-3.5" />
+                Log out
               </button>
             )}
           </div>
         </div>
+        {modelState === 'loading' && (
+          <div className="h-0.5 bg-slate-100">
+            <div className="h-full bg-brand-500 transition-[width] duration-500" style={{ width: `${downloadPct}%` }} />
+          </div>
+        )}
       </header>
 
       {/* Main Body */}
-      <main className="flex-1 p-4 md:p-8 max-w-6xl w-full mx-auto">
+      <main className="flex-1 px-4 py-6 md:px-6 md:py-10 max-w-6xl w-full mx-auto print:p-0 print:max-w-none">
         {!profile && (
           <SignupConsent
             onComplete={handleProfileSubmit}
@@ -127,12 +180,13 @@ export function App() {
         )}
 
         {profile && !report && (
-          <SentenceRecorder
+          <AssessmentStation
             sentences={ASSESSMENT_SENTENCES}
             onGenerateReport={handleAllSentencesDone}
             whisperReady={whisperReady}
             childName={profile.name}
             speakerId={profile.speakerId}
+            age={profile.age}
           />
         )}
 
@@ -145,7 +199,7 @@ export function App() {
       </main>
 
       {/* Footer */}
-      <footer className="text-center py-6 text-xs text-slate-400 border-t border-slate-200 mt-auto">
+      <footer className="text-center py-6 text-xs text-slate-400 mt-auto print:hidden">
         ReVoice Pediatric Speech Assessment &copy; 2026 all rights reserved.
       </footer>
     </div>
